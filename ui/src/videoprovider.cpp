@@ -26,6 +26,7 @@
 #include <QMediaPlayer>
 #include <QVideoWidget>
 #include <QScreen>
+#include <QEvent>
 
 #include "videoprovider.h"
 #include "qlcfile.h"
@@ -78,6 +79,8 @@ VideoWidget::VideoWidget(Video *video, QObject *parent)
     , m_video(video)
     , m_videoPlayer(NULL)
     , m_videoWidget(NULL)
+    , m_windowMaximized(false)
+    , m_windowScreen(-1)
 {
     Q_ASSERT(video != NULL);
 
@@ -94,6 +97,7 @@ VideoWidget::VideoWidget(Video *video, QObject *parent)
     {
         m_videoWidget = new QVideoWidget;
         m_videoWidget->setStyleSheet("background-color:black;");
+        m_videoWidget->installEventFilter(this);
         m_videoPlayer->setVideoOutput(m_videoWidget);
     }
 
@@ -138,6 +142,9 @@ VideoWidget::VideoWidget(Video *video, QObject *parent)
 void VideoWidget::slotSourceUrlChanged(QString url)
 {
     qDebug() << "Video source URL changed:" << url;
+
+    // a different video gets the default window geometry
+    m_windowGeometry = QRect();
 
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
     if (url.contains("://"))
@@ -187,7 +194,10 @@ void VideoWidget::slotStatusChanged(QMediaPlayer::MediaStatus status)
             }
 
             if (m_videoWidget != NULL)
+            {
+                storeWindowGeometry();
                 m_videoWidget->hide();
+            }
 
             m_video->stop(functionParent());
             break;
@@ -252,6 +262,7 @@ void VideoWidget::slotPlaybackVideo()
     {
         m_videoWidget = new QVideoWidget;
         m_videoWidget->setStyleSheet("background-color:black;");
+        m_videoWidget->installEventFilter(this);
         m_videoPlayer->setVideoOutput(m_videoWidget);
     }
 
@@ -261,11 +272,29 @@ void VideoWidget::slotPlaybackVideo()
     {
         QSize resolution = m_video->resolution();
         m_videoWidget->setFullScreen(false);
-        if (resolution.isEmpty())
-            m_videoWidget->setGeometry(0, 50, 640, 480);
+
+        // forget the last window geometry if the screens setup
+        // or the Video target screen have changed in the meantime
+        if (m_windowScreen != screen || m_windowScreenLayout != screenLayoutSignature())
+            m_windowGeometry = QRect();
+        m_windowScreen = screen;
+
+        if (m_windowGeometry.isValid())
+        {
+            m_defaultGeometry = QRect();
+            m_videoWidget->setGeometry(m_windowGeometry);
+            if (m_windowMaximized)
+                m_videoWidget->setWindowState(m_videoWidget->windowState() | Qt::WindowMaximized);
+        }
         else
-            m_videoWidget->setGeometry(0, 50, resolution.width(), resolution.height());
-        m_videoWidget->move(rect.topLeft());
+        {
+            if (resolution.isEmpty())
+                m_videoWidget->setGeometry(0, 50, 640, 480);
+            else
+                m_videoWidget->setGeometry(0, 50, resolution.width(), resolution.height());
+            m_videoWidget->move(rect.topLeft());
+            m_defaultGeometry = QRect(rect.topLeft(), m_videoWidget->size());
+        }
     }
     else
     {
@@ -302,6 +331,9 @@ void VideoWidget::slotStopVideo()
 
     if (m_videoWidget != NULL)
     {
+        // must be done before leaving fullscreen mode
+        storeWindowGeometry();
+
         if (m_video->fullscreen())
             m_videoWidget->setFullScreen(false);
         m_videoWidget->hide();
@@ -324,6 +356,57 @@ void VideoWidget::slotBrightnessVolumeAdjust(qreal value)
     if (m_audioOutput)
         m_audioOutput->setVolume(linearVolume);
 #endif
+}
+
+void VideoWidget::storeWindowGeometry()
+{
+    if (m_videoWidget == NULL || m_videoWidget->isVisible() == false ||
+        m_videoWidget->isFullScreen())
+        return;
+
+    // the user has not moved or resized the window placed by default,
+    // so keep using the default (e.g. the video resolution might be known later)
+    if (m_defaultGeometry.isValid() &&
+        m_videoWidget->frameGeometry().topLeft() == m_defaultGeometry.topLeft() &&
+        m_videoWidget->size() == m_defaultGeometry.size())
+        return;
+
+    // geometry() and setGeometry() both refer to the client area,
+    // so the window frame does not shift the position at each playback
+    m_windowMaximized = m_videoWidget->isMaximized();
+    if (m_windowMaximized)
+        m_windowGeometry = m_videoWidget->normalGeometry();
+    else
+        m_windowGeometry = m_videoWidget->geometry();
+    m_windowScreenLayout = screenLayoutSignature();
+}
+
+QString VideoWidget::screenLayoutSignature() const
+{
+    QString signature;
+    QScreen *primary = QGuiApplication::primaryScreen();
+
+    foreach (QScreen *scr, QGuiApplication::screens())
+    {
+        QRect geom = scr->geometry();
+        signature.append(QString("%1,%2,%3,%4,%5,%6;")
+                         .arg(geom.x()).arg(geom.y())
+                         .arg(geom.width()).arg(geom.height())
+                         .arg(scr->devicePixelRatio())
+                         .arg(scr == primary ? 1 : 0));
+    }
+
+    return signature;
+}
+
+bool VideoWidget::eventFilter(QObject *obj, QEvent *event)
+{
+    // the user closed the video window. Close is received
+    // before the window is hidden, so its geometry is still valid
+    if (obj == m_videoWidget && event->type() == QEvent::Close)
+        storeWindowGeometry();
+
+    return QObject::eventFilter(obj, event);
 }
 
 int VideoWidget::getScreenCount() const

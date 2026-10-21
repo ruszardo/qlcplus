@@ -23,6 +23,7 @@
 #include <QMediaPlayer>
 #include <QObject>
 #include <QHash>
+#include <QRect>
 
 #include "video.h"
 
@@ -53,7 +54,18 @@ protected slots:
 private:
     int getScreenCount() const;
 
+    /** Remember the current geometry of the video window,
+     *  if it is visible and not in fullscreen mode */
+    void storeWindowGeometry();
+
+    /** Return a string describing the current screens setup,
+     *  used to detect changes since the window geometry was stored */
+    QString screenLayoutSignature() const;
+
 protected:
+    /** Catch the video window being closed by the user */
+    bool eventFilter(QObject *obj, QEvent *event) override;
+
     /** reference to the actual Video Function */
     Video *m_video;
     /** output interface to render video data */
@@ -63,6 +75,18 @@ protected:
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     QAudioOutput *m_audioOutput;
 #endif
+    /** Last geometry of the video window in windowed mode.
+     *  Runtime only. An invalid rect means default geometry */
+    QRect m_windowGeometry;
+    /** Whether the video window was maximized when m_windowGeometry was stored */
+    bool m_windowMaximized;
+    /** Default placement of the video window (frame position and client size),
+     *  invalid when the remembered geometry has been applied */
+    QRect m_defaultGeometry;
+    /** Target screen index of the last windowed playback */
+    int m_windowScreen;
+    /** Screens setup when m_windowGeometry was stored */
+    QString m_windowScreenLayout;
 
 private:
     FunctionParent functionParent() const;
