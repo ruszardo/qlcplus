@@ -329,6 +329,9 @@ void ShowManager::initToolbar()
     timeFont.setBold(true);
     timeFont.setPixelSize(20);
     m_timeLabel->setFont(timeFont);
+    // fix both dimensions, so updating the time does not relayout the toolbar.
+    // That would rebuild its extension menu and make overflowed actions unclickable
+    m_timeLabel->setFixedHeight(m_timeLabel->sizeHint().height());
     m_toolbar->addWidget(m_timeLabel);
     m_toolbar->addSeparator();
 
